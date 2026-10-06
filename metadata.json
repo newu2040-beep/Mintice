@@ -1,0 +1,6 @@
+{
+  "name": "Mintice",
+  "description": "A personal event, memory, birthday, festival, occasion, organizer, reminder, and life-tracking app.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,25 @@
+<resources>
+    <string name="app_name">Mintice</string>
+    <string name="app_tagline">Plan it. Remember it. Live it.</string>
+    <string name="tab_home">Home</string>
+    <string name="tab_calendar">Calendar</string>
+    <string name="tab_memories">Memories</string>
+    <string name="tab_more">More</string>
+    <string name="greeting_morning">Good morning,</string>
+    <string name="greeting_afternoon">Good afternoon,</string>
+    <string name="greeting_evening">Good evening,</string>
+    <string name="greeting_subtitle">Make it a beautiful day ♡</string>
+    <string name="next_event_title">Next Event</string>
+    <string name="quick_actions_title">Quick Actions</string>
+    <string name="action_add_event">Add Event</string>
+    <string name="action_calendar">Calendar</string>
+    <string name="action_reminders">Reminders</string>
+    <string name="action_quick_note">Quick Note</string>
+    <string name="upcoming_events_title">Upcoming</string>
+    <string name="see_all">See all</string>
+    <string name="today">Today</string>
+    <string name="tomorrow">Tomorrow</string>
+    <string name="yesterday">Yesterday</string>
+    <string name="channel_name">Event Reminders</string>
+    <string name="channel_description">Notifications for upcoming events, birthdays, and reminders</string>
+</resources>

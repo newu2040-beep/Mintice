@@ -1,0 +1,223 @@
+name: Build and Publish Debug APK
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build & Release Debug APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Verify Java environment
+        run: |
+          echo "=== Java Environment Verification ==="
+          java -version
+          echo "JAVA_HOME is: $JAVA_HOME"
+          
+          if [ -z "$JAVA_HOME" ] || [ ! -d "$JAVA_HOME" ]; then
+            echo "ERROR: JAVA_HOME is not set or does not exist." >&2
+            exit 1
+          fi
+
+          JAVA_VER=$(java -version 2>&1 | awk -F '"' '/version/ {print $2}')
+          echo "Detected full Java version string: $JAVA_VER"
+
+          MAJOR_VER=$(echo "$JAVA_VER" | awk -F. '{if ($1 == "1") print $2; else print $1}')
+          echo "Detected Java major version: $MAJOR_VER"
+
+          if [ -z "$MAJOR_VER" ]; then
+            echo "ERROR: Unable to detect Java major version." >&2
+            exit 1
+          fi
+
+          if [ "$MAJOR_VER" -lt 17 ]; then
+            echo "ERROR: Java major version must be 17 or higher (detected: $MAJOR_VER)." >&2
+            exit 1
+          fi
+          echo "Java 17+ environment verified successfully."
+
+      - name: Set up Gradle 9.3.1
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.3.1'
+
+      - name: Create temporary debug keystore
+        run: |
+          echo "=== Keystore Setup ==="
+          if [ -f "./debug.keystore" ]; then
+            echo "debug.keystore already exists in project root."
+          else
+            echo "Generating temporary debug keystore..."
+            keytool -genkey -v \
+              -keystore ./debug.keystore \
+              -alias androiddebugkey \
+              -storepass android \
+              -keypass android \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
+
+          if [ ! -f "./debug.keystore" ] || [ ! -s "./debug.keystore" ]; then
+            echo "ERROR: Failed to create or find debug.keystore." >&2
+            exit 1
+          fi
+          echo "Temporary debug keystore verified."
+
+      - name: Build debug APK
+        run: |
+          gradle :app:assembleDebug --stacktrace --no-daemon
+
+      - name: Verify APK output
+        run: |
+          echo "=== Verifying Debug APK Output ==="
+          TARGET_APK="app/build/outputs/apk/debug/app-debug.apk"
+          if [ -f "$TARGET_APK" ] && [ -s "$TARGET_APK" ]; then
+            echo "Found target APK: $TARGET_APK"
+            ls -lh "$TARGET_APK"
+          else
+            echo "ERROR: Expected APK not found at $TARGET_APK." >&2
+            echo "Listing contents of app/build/outputs/apk if present:"
+            if [ -d "app/build/outputs/apk" ]; then
+              find app/build/outputs/apk -name "*.apk" -type f
+            fi
+            exit 1
+          fi
+
+      - name: Upload debug APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+
+      - name: Prepare APK release asset
+        id: prepare_asset
+        run: |
+          echo "=== Preparing Release Asset ==="
+          ASSET_DIR="${{ runner.temp }}/apk-release"
+          mkdir -p "$ASSET_DIR"
+
+          REPO_NAME="${GITHUB_REPOSITORY##*/}"
+          # Sanitize repository name for safe filename
+          SAFE_REPO=$(echo "$REPO_NAME" | tr -cs 'a-zA-Z0-9._-' '-' | sed 's/^-//;s/-$//')
+          if [ -z "$SAFE_REPO" ]; then
+            SAFE_REPO="app"
+          fi
+
+          ASSET_FILENAME="${SAFE_REPO}-debug-build-${{ github.run_number }}.apk"
+          ASSET_PATH="${ASSET_DIR}/${ASSET_FILENAME}"
+
+          cp "app/build/outputs/apk/debug/app-debug.apk" "$ASSET_PATH"
+
+          if [ ! -f "$ASSET_PATH" ] || [ ! -s "$ASSET_PATH" ]; then
+            echo "ERROR: Failed to prepare release asset at $ASSET_PATH" >&2
+            exit 1
+          fi
+
+          echo "Release asset prepared: $ASSET_PATH"
+          echo "asset_path=$ASSET_PATH" >> "$GITHUB_OUTPUT"
+          echo "asset_name=$ASSET_FILENAME" >> "$GITHUB_OUTPUT"
+
+      - name: Publish APK to GitHub Releases
+        id: publish_release
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "=== Publishing to GitHub Releases ==="
+          gh --version
+
+          ASSET_PATH="${{ steps.prepare_asset.outputs.asset_path }}"
+          if [ ! -f "$ASSET_PATH" ] || [ ! -s "$ASSET_PATH" ]; then
+            echo "ERROR: Prepared release asset is missing or empty: $ASSET_PATH" >&2
+            exit 1
+          fi
+
+          TAG_NAME="debug-apk-build-${{ github.run_number }}-${{ github.run_attempt }}"
+          RELEASE_TITLE="Debug APK Build #${{ github.run_number }}"
+
+          NOTES=$(cat <<EOF
+          ### 📱 Mintice Debug APK Build
+
+          This is an automatically generated debug APK built by GitHub Actions.
+
+          - **Build Number:** #${{ github.run_number }}
+          - **Run Attempt:** ${{ github.run_attempt }}
+          - **Commit SHA:** \`${{ github.sha }}\`
+          - **Intended Purpose:** Testing and evaluation
+          - **Note:** This APK is signed with a temporary debug certificate and is not a Play Store production release.
+
+          Download the APK directly from the **Assets** section below to install on your Android device.
+          EOF
+          )
+
+          gh release create "$TAG_NAME" "$ASSET_PATH" \
+            --target "${{ github.sha }}" \
+            --title "$RELEASE_TITLE" \
+            --notes "$NOTES" \
+            --latest
+
+          echo "release_tag=$TAG_NAME" >> "$GITHUB_OUTPUT"
+          echo "release_title=$RELEASE_TITLE" >> "$GITHUB_OUTPUT"
+
+      - name: Report APK download result
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "=== Summary & Reporting ==="
+          TAG_NAME="debug-apk-build-${{ github.run_number }}-${{ github.run_attempt }}"
+          ASSET_NAME="${{ steps.prepare_asset.outputs.asset_name }}"
+
+          if [ "${{ steps.publish_release.outcome }}" = "success" ]; then
+            echo "GitHub Release publishing succeeded!"
+            RELEASE_URL="https://github.com/${{ github.repository }}/releases/tag/${TAG_NAME}"
+
+            echo "Release Tag: $TAG_NAME"
+            echo "Release URL: $RELEASE_URL"
+            echo "Asset Filename: $ASSET_NAME"
+
+            gh release view "$TAG_NAME" || true
+
+            cat <<EOF >> "$GITHUB_STEP_SUMMARY"
+          ## 🎉 APK Build & Release Succeeded!
+
+          - **Release Title:** Debug APK Build #${{ github.run_number }}
+          - **Release Tag:** \`${TAG_NAME}\`
+          - **Download Release APK:** [${ASSET_NAME}](${RELEASE_URL})
+          - **Direct Release Page:** [View GitHub Release](${RELEASE_URL})
+
+          ### 📦 Installation
+          You can download \`${ASSET_NAME}\` directly onto your Android device from the Release Assets.
+          The standard GitHub Actions artifact \`app-debug-apk\` is also preserved as a backup.
+          EOF
+          else
+            echo "::warning::GitHub Release publishing was not completed, but the APK build and Actions artifact succeeded."
+            cat <<EOF >> "$GITHUB_STEP_SUMMARY"
+          ## ⚠️ APK Build Succeeded (Release Publish Warning)
+
+          The debug APK was built successfully and is preserved as a GitHub Actions artifact.
+
+          - **Artifact Name:** \`app-debug-apk\`
+          - **Artifact File:** \`app-debug.apk\`
+          - **Status:** Available for download under the **Artifacts** section of this GitHub Actions workflow run.
+          EOF
+          fi
